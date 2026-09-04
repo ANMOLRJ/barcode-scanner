@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Barcode Product Scanner</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #f5f7fb;
+    color: #172033;
+  }
+  .app { max-width: 520px; margin: auto; min-height: 100vh; padding: 18px; }
+  header { padding: 10px 2px 18px; }
+  h1 { margin: 0; font-size: 25px; }
+  .sub { color: #687386; margin-top: 5px; }
+  .card {
+    background: white;
+    border-radius: 20px;
+    padding: 18px;
+    margin-bottom: 15px;
+    box-shadow: 0 8px 30px rgba(20,35,60,.08);
+  }
+  button, input, select {
+    width: 100%;
+    border-radius: 13px;
+    border: 1px solid #dce2eb;
+    padding: 13px 14px;
+    font-size: 16px;
+  }
+  button { cursor: pointer; font-weight: 700; }
+  .primary { background: #172033; color: white; border: 0; }
+  .secondary { background: white; color: #172033; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  label { display:block; font-size:13px; font-weight:700; margin: 12px 0 6px; }
+  #scanner { display:none; }
+  .camera {
+    position: relative;
+    overflow: hidden;
+    border-radius: 18px;
+    background: #10151f;
+    aspect-ratio: 3/4;
+  }
+  video { width:100%; height:100%; object-fit:cover; display:block; }
+  .scan-box {
+    position:absolute; left:12%; right:12%; top:35%; height:30%;
+    border:3px solid white; border-radius:16px;
+    box-shadow:0 0 0 9999px rgba(0,0,0,.32);
+  }
+  .scan-line {
+    position:absolute; left:8%; right:8%; top:50%;
+    height:2px; background:white;
+    animation: scan 1.6s infinite ease-in-out;
+  }
+  @keyframes scan {
+    0%,100% { transform:translateY(-55px); }
+    50% { transform:translateY(55px); }
+  }
+  .hint { color:#687386; font-size:14px; text-align:center; margin:10px 0 0; }
+  .status { margin-top:10px; padding:11px 12px; border-radius:12px; background:#f0f3f8; font-size:14px; }
+  .success { background:#eaf8ef; }
+  .error { background:#fff0f0; }
+  .hidden { display:none !important; }
+  .product-title { font-size:20px; font-weight:800; margin-bottom:4px; }
+  .barcode { font-family:monospace; color:#687386; }
+  .spinner {
+    width:18px; height:18px; border:3px solid #d9dee8;
+    border-top-color:#172033; border-radius:50%;
+    display:inline-block; animation:spin .7s linear infinite;
+    vertical-align:-4px; margin-right:7px;
+  }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .history-item {
+    border-top:1px solid #edf0f5; padding:12px 0;
+  }
+  .history-item:first-child { border-top:0; }
+  .muted { color:#7b8494; font-size:13px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>Barcode Product Scanner</h1>
+    <div class="sub">Scan products and save them to Google Sheets.</div>
+  </header>
+
+  <section class="card" id="home">
+    <button class="primary" id="scanBtn">📷 Scan Product</button>
+    <div style="height:10px"></div>
+    <button class="secondary" id="manualBtn">⌨️ Enter Barcode Manually</button>
+  </section>
+
+  <section class="card hidden" id="scanner">
+    <div class="camera">
+      <video id="video" autoplay muted playsinline></video>
+      <div class="scan-box"></div>
+      <div class="scan-line"></div>
+    </div>
+    <p class="hint">Point the camera at a barcode. The scan starts automatically.</p>
+    <div style="height:10px"></div>
+    <button class="secondary" id="stopBtn">Close Camera</button>
+    <div class="status" id="scanStatus">Starting camera…</div>
+  </section>
+
+  <section class="card hidden" id="manual">
+    <label for="manualBarcode">Barcode</label>
+    <input id="manualBarcode" inputmode="numeric" placeholder="e.g. 8901234567890">
+    <div style="height:10px"></div>
+    <button class="primary" id="manualLookupBtn">Continue</button>
+    <div style="height:10px"></div>
+    <button class="secondary" id="manualCancelBtn">Cancel</button>
+  </section>
+
+  <section class="card hidden" id="productCard">
+    <div class="product-title" id="productName">Product</div>
+    <div class="barcode" id="productBarcode"></div>
+
+    <label for="name">Product Name</label>
+    <input id="name" placeholder="Product name">
+
+    <label for="brand">Brand</label>
+    <input id="brand" placeholder="Brand">
+
+    <div class="row">
+      <div>
+        <label for="category">Category</label>
+        <input id="category" placeholder="Category">
+      </div>
+      <div>
+        <label for="quantity">Quantity</label>
+        <input id="quantity" type="number" min="1" value="1">
+      </div>
+    </div>
+
+    <div style="height:14px"></div>
+    <button class="primary" id="saveBtn">💾 Save to Google Sheet</button>
+    <div style="height:10px"></div>
+    <button class="secondary" id="againBtn">📷 Scan Another</button>
+    <div class="status hidden" id="saveStatus"></div>
+  </section>
+
+  <section class="card" id="historyCard">
+    <strong>Recent scans</strong>
+    <div id="history"><div class="muted" style="margin-top:10px">No scans yet.</div></div>
+  </section>
+</div>
+
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycbyWUeyupOAenIkEd8Ym773jmuTxGB2B4HuI5UeI_PlZR08VwOdB6vrpm_bKxc2v77AP/exec";
+
+const home = document.getElementById("home");
+const scanner = document.getElementById("scanner");
+const manual = document.getElementById("manual");
+const productCard = document.getElementById("productCard");
+const historyEl = document.getElementById("history");
+const video = document.getElementById("video");
+const scanStatus = document.getElementById("scanStatus");
+
+let stream = null;
+let detector = null;
+let scanTimer = null;
+let currentBarcode = "";
+let history = JSON.parse(localStorage.getItem("barcodeHistory") || "[]");
+
+function showOnly(section) {
+  [scanner, manual, productCard].forEach(x => x.classList.add("hidden"));
+  if (section) section.classList.remove("hidden");
+}
+
+function stopCamera() {
+  if (scanTimer) clearInterval(scanTimer);
+  scanTimer = null;
+  if (stream) {
+    stream.getTracks().forEach(track => track.stop());
+    stream = null;
+  }
+  video.srcObject = null;
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    scanStatus.textContent = "Camera is not available. Open this page over HTTPS (or localhost).";
+    scanStatus.className = "status error";
+    return;
+  }
+
+  if (!("BarcodeDetector" in window)) {
+    scanStatus.textContent =
+      "Automatic barcode detection is not supported by this browser. Use Chrome/Edge on a supported phone, or use manual entry.";
+    scanStatus.className = "status error";
+    return;
+  }
+
+  try {
+    detector = new BarcodeDetector({
+      formats: [
+        "ean_13","ean_8","upc_a","upc_e",
+        "code_128","code_39","code_93","itf",
+        "codabar","data_matrix","qr_code"
+      ]
+    });
+
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+
+    video.srcObject = stream;
+    await video.play();
+
+    scanStatus.textContent = "Camera ready — point at the barcode.";
+    scanStatus.className = "status success";
+
+    scanTimer = setInterval(scanFrame, 250);
+  } catch (err) {
+    scanStatus.textContent = "Camera error: " + err.message;
+    scanStatus.className = "status error";
+  }
+}
+
+async function scanFrame() {
+  if (!detector || !video.videoWidth) return;
+
+  try {
+    const codes = await detector.detect(video);
+    if (codes.length) {
+      const value = codes[0].rawValue;
+      if (value) {
+        currentBarcode = value;
+        stopCamera();
+        openProduct(value, "camera");
+      }
+    }
+  } catch (_) {}
+}
+
+function openProduct(barcode, source) {
+  currentBarcode = barcode;
+  home.classList.add("hidden");
+  manual.classList.add("hidden");
+  scanner.classList.add("hidden");
+  productCard.classList.remove("hidden");
+
+  document.getElementById("productName").textContent = "Scanned Product";
+  document.getElementById("productBarcode").textContent = barcode;
+  document.getElementById("name").value = "";
+  document.getElementById("brand").value = "";
+  document.getElementById("category").value = "";
+  document.getElementById("quantity").value = "1";
+  document.getElementById("saveStatus").classList.add("hidden");
+
+  // Optional public product lookup. If unavailable, user can enter the fields manually.
+  lookupProduct(barcode);
+}
+
+async function lookupProduct(barcode) {
+  try {
+    // OpenFoodFacts works well for many packaged-food EAN/UPC barcodes.
+    const r = await fetch("https://world.openfoodfacts.org/api/v2/product/" + encodeURIComponent(barcode) + ".json");
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.status !== 1 || !d.product) return;
+
+    const p = d.product;
+    document.getElementById("productName").textContent = p.product_name || "Scanned Product";
+    document.getElementById("name").value = p.product_name || "";
+    document.getElementById("brand").value = p.brands || "";
+    document.getElementById("category").value =
+      p.categories_tags?.[0]?.replace(/^en:/, "").replaceAll("-", " ") ||
+      p.categories || "";
+  } catch (_) {}
+}
+
+async function saveProduct() {
+  const status = document.getElementById("saveStatus");
+  const button = document.getElementById("saveBtn");
+
+  const payload = {
+    barcode: currentBarcode,
+    name: document.getElementById("name").value.trim(),
+    brand: document.getElementById("brand").value.trim(),
+    category: document.getElementById("category").value.trim(),
+    quantity: Math.max(1, Number(document.getElementById("quantity").value || 1)),
+    source: "camera/manual"
+  };
+
+  if (!payload.barcode) {
+    status.textContent = "Barcode is missing.";
+    status.className = "status error";
+    status.classList.remove("hidden");
+    return;
+  }
+
+  button.disabled = true;
+  button.innerHTML = '<span class="spinner"></span>Saving…';
+
+  try {
+    // no-cors is intentional for Apps Script POST from a static frontend.
+    await fetch(API_URL, {
+      method: "POST",
+      mode: "no-cors",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload)
+    });
+
+    addHistory(payload);
+    status.textContent = "Saved to Google Sheet.";
+    status.className = "status success";
+    status.classList.remove("hidden");
+  } catch (err) {
+    status.textContent = "Save failed: " + err.message;
+    status.className = "status error";
+    status.classList.remove("hidden");
+  } finally {
+    button.disabled = false;
+    button.textContent = "💾 Save to Google Sheet";
+  }
+}
+
+function addHistory(item) {
+  history.unshift({
+    ...item,
+    time: new Date().toLocaleString()
+  });
+  history = history.slice(0, 10);
+  localStorage.setItem("barcodeHistory", JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  if (!history.length) {
+    historyEl.innerHTML = '<div class="muted" style="margin-top:10px">No scans yet.</div>';
+    return;
+  }
+
+  historyEl.innerHTML = history.map(x => `
+    <div class="history-item">
+      <strong>${escapeHtml(x.name || "Unnamed product")}</strong>
+      <div class="muted">${escapeHtml(x.barcode)} · Qty ${escapeHtml(String(x.quantity))}</div>
+      <div class="muted">${escapeHtml(x.time)}</div>
+    </div>
+  `).join("");
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"
+  }[c]));
+}
+
+document.getElementById("scanBtn").onclick = async () => {
+  home.classList.add("hidden");
+  manual.classList.add("hidden");
+  productCard.classList.add("hidden");
+  scanner.classList.remove("hidden");
+  await startCamera();
+};
+
+document.getElementById("stopBtn").onclick = () => {
+  stopCamera();
+  showOnly(null);
+  home.classList.remove("hidden");
+};
+
+document.getElementById("manualBtn").onclick = () => {
+  home.classList.add("hidden");
+  scanner.classList.add("hidden");
+  productCard.classList.add("hidden");
+  manual.classList.remove("hidden");
+  document.getElementById("manualBarcode").focus();
+};
+
+document.getElementById("manualCancelBtn").onclick = () => {
+  manual.classList.add("hidden");
+  home.classList.remove("hidden");
+};
+
+document.getElementById("manualLookupBtn").onclick = () => {
+  const code = document.getElementById("manualBarcode").value.trim();
+  if (!code) return;
+  openProduct(code, "manual");
+};
+
+document.getElementById("manualBarcode").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("manualLookupBtn").click();
+});
+
+document.getElementById("saveBtn").onclick = saveProduct;
+
+document.getElementById("againBtn").onclick = async () => {
+  productCard.classList.add("hidden");
+  scanner.classList.remove("hidden");
+  await startCamera();
+};
+
+window.addEventListener("beforeunload", stopCamera);
+renderHistory();
+</script>
+</body>
+</html>
