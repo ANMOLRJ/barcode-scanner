@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>Smart Product Scanner - Free OCR</title>
+<title>Smart Product Scanner - Improved Free OCR</title>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#f4f6fa;color:#172033;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
@@ -39,12 +39,12 @@ textarea{min-height:100px;resize:vertical}
 <div class="app">
 <header>
 <h1>📦 Smart Product Scanner</h1>
-<div class="sub">Barcode scan + free browser OCR for MRP, MFD and EXP.</div>
+<div class="sub">Barcode scan + improved free OCR for MRP, MFD and EXP.</div>
 </header>
 
 <section class="card" id="home">
 <button class="btn primary" id="start">📷 Start Scanning</button>
-<p class="muted small">Step 1 scans the barcode. Step 2 opens the camera again and uses free Tesseract OCR to read package text.</p>
+<p class="muted small">Step 1 scans the barcode. Step 2 opens the camera again and uses enhanced Tesseract OCR with image preprocessing and multiple OCR passes to read package text.</p>
 <div style="height:9px"></div>
 <button class="btn" id="manual">⌨️ Enter Barcode Manually</button>
 </section>
@@ -60,7 +60,7 @@ textarea{min-height:100px;resize:vertical}
 <section class="card hidden" id="detailScanner">
 <div class="step">Step 2 of 2 — MRP / MFD / EXP</div>
 <div class="camera"><video id="detailVideo" autoplay muted playsinline></video><div class="ocrbox"></div></div>
-<p class="muted" style="text-align:center">Place the printed details inside the box. Tap Capture & Read.</p>
+<p class="muted" style="text-align:center">Place MRP/MFD/EXP clearly inside the box. Keep the text flat, close and well lit, then tap Capture & Read.</p>
 <div class="status" id="detailStatus">Starting details camera…</div>
 <div style="height:9px"></div>
 <button class="btn primary" id="captureDetails">📸 Capture & Read Text</button>
@@ -116,7 +116,7 @@ textarea{min-height:100px;resize:vertical}
 <canvas id="captureCanvas" class="hidden"></canvas>
 
 <script>
-const API_URL="https://script.google.com/macros/s/AKfycbyNQRFHi2LjW5ZuQUL9sTTiFAoXDVoDk0djCR6MeMFr3QluUYZcOg2qK0YlFwGqsyxIrQ/exec";
+const API_URL="https://script.google.com/macros/s/AKfycbyWUeyupOAenIkEd8Ym773jmuTxGB2B4HuI5UeI_PlZR08VwOdB6vrpm_bKxc2v77AP/exec";
 
 const home=document.getElementById("home");
 const barcodeScanner=document.getElementById("barcodeScanner");
@@ -131,7 +131,7 @@ const captureCanvas=document.getElementById("captureCanvas");
 
 let barcodeStream=null,detailStream=null,detector=null,barcodeTimer=null;
 let currentBarcode="",barcodeSource="camera",detailsSource="ocr",ocrText="";
-let history=JSON.parse(localStorage.getItem("barcodeHistoryV4")||"[]");
+let history=JSON.parse(localStorage.getItem("barcodeHistoryV5")||"[]");
 
 function hideAll(){
  [barcodeScanner,detailScanner,manualCard,product,ocrProgress].forEach(x=>x.classList.add("hidden"));
@@ -196,10 +196,185 @@ async function openDetailsCamera(){
 
 function captureImage(){
  const w=detailVideo.videoWidth,h=detailVideo.videoHeight;
+ if(!w||!h) throw new Error("Camera frame is not ready.");
  captureCanvas.width=w;captureCanvas.height=h;
- const ctx=captureCanvas.getContext("2d");
+ const ctx=captureCanvas.getContext("2d",{willReadFrequently:true});
  ctx.drawImage(detailVideo,0,0,w,h);
- return captureCanvas.toDataURL("image/jpeg",0.92);
+ return captureCanvas.toDataURL("image/jpeg",0.95);
+}
+
+/*
+ Improved OCR pipeline:
+ - Crops the same area shown by the dashed OCR box.
+ - Upscales the crop.
+ - Creates grayscale + contrast/threshold versions.
+ - Runs multiple Tesseract page-segmentation modes.
+ Tesseract.js documentation notes that upscaling can improve OCR,
+ and different PSM modes are useful for small/region text.
+*/
+function makeOCRImages(dataUrl){
+ return new Promise((resolve,reject)=>{
+  const img=new Image();
+  img.onload=()=>{
+   const cropX=Math.floor(img.width*0.06);
+   const cropY=Math.floor(img.height*0.20);
+   const cropW=Math.floor(img.width*0.88);
+   const cropH=Math.floor(img.height*0.60);
+
+   const scale=2.5;
+   const cw=Math.max(900,Math.floor(cropW*scale));
+   const ch=Math.max(600,Math.floor(cropH*scale));
+
+   const canvas=document.createElement("canvas");
+   canvas.width=cw;canvas.height=ch;
+   const ctx=canvas.getContext("2d",{willReadFrequently:true});
+   ctx.imageSmoothingEnabled=true;
+   ctx.imageSmoothingQuality="high";
+   ctx.drawImage(img,cropX,cropY,cropW,cropH,0,0,cw,ch);
+
+   const original=canvas.toDataURL("image/jpeg",0.95);
+
+   const gray=document.createElement("canvas");
+   gray.width=cw;gray.height=ch;
+   const g=gray.getContext("2d",{willReadFrequently:true});
+   g.drawImage(canvas,0,0);
+   const pixels=g.getImageData(0,0,cw,ch);
+   const d=pixels.data;
+   for(let i=0;i<d.length;i+=4){
+    const lum=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    // contrast enhancement around mid-gray
+    let v=(lum-128)*1.65+128;
+    v=Math.max(0,Math.min(255,v));
+    d[i]=d[i+1]=d[i+2]=v;
+   }
+   g.putImageData(pixels,0,0);
+   const contrast=gray.toDataURL("image/png");
+
+   const bw=document.createElement("canvas");
+   bw.width=cw;bw.height=ch;
+   const b=bw.getContext("2d",{willReadFrequently:true});
+   b.drawImage(gray,0,0);
+   const bp=b.getImageData(0,0,cw,ch);
+   const bd=bp.data;
+   // adaptive-ish local threshold using a small neighborhood average
+   // with a simple global fallback, suitable for browser-only processing.
+   for(let i=0;i<bd.length;i+=4){
+    const v=bd[i];
+    const out=v>165?255:(v<90?0:(v>128?255:0));
+    bd[i]=bd[i+1]=bd[i+2]=out;
+   }
+   b.putImageData(bp,0,0);
+   const binary=bw.toDataURL("image/png");
+
+   resolve([original,contrast,binary]);
+  };
+  img.onerror=()=>reject(new Error("Could not prepare captured image."));
+  img.src=dataUrl;
+ });
+}
+
+function cleanOCRText(text){
+ return String(text||"")
+  .replace(/\r/g,"")
+  .replace(/[“”]/g,'"')
+  .replace(/[’]/g,"'")
+  .replace(/[|]/g,"I")
+  .replace(/[₹]/g," Rs ")
+  .replace(/\bM\s*\.?\s*R\s*\.?\s*P\s*\.?\b/gi,"MRP")
+  .replace(/\bM\s*\.?\s*F\s*[GD]\s*\.?\b/gi,"MFD")
+  .replace(/\bE\s*\.?\s*X\s*\.?\s*P\s*\.?\b/gi,"EXP")
+  .replace(/[ \t]+/g," ")
+  .replace(/\n[ \t]+/g,"\n")
+  .trim();
+}
+
+function numberFromText(x){
+ let v=String(x||"").replace(/[OoQ]/g,"0").replace(/[Il]/g,"1");
+ v=v.replace(/[,]/g,".");
+ const m=v.match(/\d+(?:\.\d{1,2})?/);
+ return m?m[0]:"";
+}
+
+function findMoney(text){
+ const t=cleanOCRText(text);
+ const lines=t.split(/\n+/);
+
+ // Prefer money on the same line as an MRP label.
+ for(const line of lines){
+  if(/\bM\s*R\s*P\b|MAX(?:IMUM)?\s*RETAIL\s*PRICE/i.test(line)){
+   const after=line.replace(/.*?(?:M\s*R\s*P|MAX(?:IMUM)?\s*RETAIL\s*PRICE)/i,"");
+   const m=after.match(/(?:Rs\.?|INR)?\s*[.:=-]?\s*(?:₹\s*)?([0-9OoQIl]{1,6}(?:[.,][0-9OoQIl]{1,2})?)/i);
+   if(m){
+    const n=numberFromText(m[1]);
+    if(n)return n;
+   }
+   // Handles OCR inserting spaces: "MRP 1 20.00"
+   const loose=after.match(/([0-9OoQIl])\s*([0-9OoQIl]{1,5})(?:[.,]([0-9OoQIl]{1,2}))?/);
+   if(loose){
+    const joined=(loose[1]+loose[2]).replace(/[OoQ]/g,"0").replace(/[Il]/g,"1");
+    const dec=loose[3]?("." + loose[3].replace(/[OoQ]/g,"0").replace(/[Il]/g,"1")):"";
+    return joined+dec;
+   }
+  }
+ }
+
+ // Common Indian packaging formats anywhere in OCR.
+ const patterns=[
+  /(?:MRP|M\s*R\s*P)[^0-9OoQIl]{0,30}(?:₹|Rs\.?|INR)?\s*([0-9OoQIl]{1,6}(?:[.,][0-9OoQIl]{1,2})?)/i,
+  /(?:MAX(?:IMUM)?\s*RETAIL\s*PRICE)[^0-9OoQIl]{0,30}(?:₹|Rs\.?|INR)?\s*([0-9OoQIl]{1,6}(?:[.,][0-9OoQIl]{1,2})?)/i,
+  /(?:₹|Rs\.?|INR)\s*([0-9OoQIl]{1,6}(?:[.,][0-9OoQIl]{1,2})?)/i
+ ];
+ for(const p of patterns){
+  const m=t.match(p);
+  if(m){
+   const n=numberFromText(m[1]);
+   if(n)return n;
+  }
+ }
+ return "";
+}
+
+function normalizeDateCandidate(v){
+ let x=String(v||"").trim().replace(/[OoQ]/g,"0").replace(/[Il]/g,"1");
+ x=x.replace(/\s+/g,"");
+ x=x.replace(/[.]/g,"/");
+ return x;
+}
+
+function findDateByContext(labels,text){
+ const t=cleanOCRText(text);
+ const lines=t.split(/\n+/);
+ const datePatterns=[
+  /\b([0-3]?\d[\/-][01]?\d[\/-](?:20)?\d{2})\b/,
+  /\b([01]?\d[\/-](?:20)?\d{2})\b/,
+  /\b((?:20)\d{2}[\/-][01]?\d)\b/
+ ];
+
+ for(const line of lines){
+  if(new RegExp(labels,"i").test(line)){
+   for(const p of datePatterns){
+    const m=line.match(p);
+    if(m)return normalizeDateCandidate(m[1]);
+   }
+  }
+ }
+
+ // OCR sometimes puts the label and date on adjacent lines.
+ const all=lines.join("\n");
+ const re=new RegExp("(?:^|\\n)\\s*(?:"+labels+")[^\\n]{0,50}\\n?[^\\n]{0,20}?(\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2})","i");
+ const m=all.match(re);
+ return m?normalizeDateCandidate(m[1]):"";
+}
+
+async function recognizeWithWorker(worker,image,psm,whitelist){
+ await worker.setParameters({
+  tessedit_pageseg_mode:String(psm),
+  preserve_interword_spaces:"1",
+  user_defined_dpi:"300",
+  ...(whitelist?{tessedit_char_whitelist:whitelist}:{})
+ });
+ const result=await worker.recognize(image);
+ return result?.data?.text||"";
 }
 
 async function runOCR(){
@@ -214,20 +389,50 @@ async function runOCR(){
  const status=document.getElementById("ocrStatus");
 
  try{
-  const image=captureImageData;
-  const result=await Tesseract.recognize(image,"eng",{
-   logger:m=>{
-    if(m.status)status.textContent=m.status+(m.progress!=null?" "+Math.round(m.progress*100)+"%":"");
-    if(m.progress!=null)bar.style.width=(m.progress*100)+"%";
-   }
-  });
-  ocrText=result.data.text||"";
+  status.textContent="Preparing image…";
+  bar.style.width="5%";
+
+  const images=await makeOCRImages(captureImageData);
+  const worker=await Tesseract.createWorker("eng");
+
+  let combined=[];
+  const total=images.length*2;
+  let done=0;
+
+  for(const image of images){
+   // PSM 6: uniform block, PSM 11: sparse text.
+   const a=await recognizeWithWorker(worker,image,6,"");
+   combined.push(a);
+   done++;bar.style.width=Math.round(done/total*90)+"%";
+   status.textContent="Reading package text… "+Math.round(done/total*100)+"%";
+
+   const b=await recognizeWithWorker(worker,image,11,"");
+   combined.push(b);
+   done++;bar.style.width=Math.round(done/total*90)+"%";
+  }
+
+  await worker.terminate();
+
+  // Add a digits-focused pass on the contrast image to help MRP/date numbers.
+  const numericWorker=await Tesseract.createWorker("eng");
+  const numeric=await recognizeWithWorker(
+   numericWorker,images[1],7,
+   "0123456789./:-MRPFDEXPGmfdxpeRsINR "
+  );
+  await numericWorker.terminate();
+
+  combined.push(numeric);
+  ocrText=cleanOCRText(combined.filter(Boolean).join("\n"));
+  bar.style.width="96%";
+  status.textContent="OCR completed. Extracting MRP, MFD and EXP…";
+
   parseOCR(ocrText);
+  bar.style.width="100%";
  }catch(e){
   ocrText="";
   openProduct();
-  document.getElementById("ocrResultStatus").textContent="OCR failed. Please enter MRP/MFD/EXP manually. Error: "+e.message;
- }finally{
+  document.getElementById("ocrResultStatus").textContent=
+   "OCR failed. Please enter MRP/MFD/EXP manually. Error: "+(e?.message||e);
   bar.style.width="100%";
  }
 }
@@ -239,47 +444,26 @@ document.getElementById("captureDetails").onclick=async()=>{
   await runOCR();
  }catch(e){
   stopDetailCamera();openProduct();
-  document.getElementById("ocrResultStatus").textContent="Could not capture image. Please enter details manually.";
+  document.getElementById("ocrResultStatus").textContent=
+   "Could not capture image. Please enter details manually.";
  }
 };
 
-function normalizeText(t){
- return t.replace(/[|]/g,"I").replace(/[“”]/g,'"').replace(/[’]/g,"'");
-}
-
-function findMoney(text){
- const patterns=[
-  /(?:MRP|M\.R\.P|MAX(?:IMUM)?\s*RETAIL\s*PRICE)[^\d₹Rs]{0,20}(?:₹|Rs\.?|INR)?\s*([0-9]{1,6}(?:[.,][0-9]{1,2})?)/i,
-  /(?:₹|Rs\.?|INR)\s*([0-9]{1,6}(?:[.,][0-9]{1,2})?)/i
- ];
- for(const p of patterns){const m=text.match(p);if(m)return m[1].replace(",","." )}
- return "";
-}
-
-function findDateAfter(labels,text){
- const re=new RegExp("(?:("+labels+"))[^0-9]{0,25}([0-3]?\\d[\\/-][01]?\\d[\\/-](?:20)?\\d{2}|[01]?\\d[\\/-](?:20)?\\d{2}|(?:20)?\\d{2}[\\/-][01]?\\d)","i");
- const m=text.match(re);return m?m[2]:"";
-}
-
-function findDateByContext(labels,text){
- const lines=normalizeText(text).split(/\\n+/);
- for(const line of lines){
-  if(new RegExp(labels,"i").test(line)){
-   const m=line.match(/(\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{1,2}[\\/-]\\d{2,4}|\\d{2,4}[\\/-]\\d{1,2})/);
-   if(m)return m[1];
-  }
- }
- return "";
-}
-
 function parseOCR(raw){
- const text=normalizeText(raw);
+ const text=cleanOCRText(raw);
  const mrp=findMoney(text);
- const mfd=findDateByContext("MFD|MFG|MANUFACTURED|MANUFACTURING|PKD|PACKED|DATE OF MFG|DATE OF MANUFACTURE",text);
- const exp=findDateByContext("EXP|EXPIRY|EXPIRES|BEST BEFORE|USE BY",text);
+ const mfd=findDateByContext(
+  "MFD|MFG|MANUFACTURED|MANUFACTURING|PKD|PACKED|DATE OF MFG|DATE OF MANUFACTURE",
+  text
+ );
+ const exp=findDateByContext(
+  "EXP|EXPIRY|EXPIRES|BEST BEFORE|USE BY",
+  text
+ );
 
  openProduct();
  document.getElementById("ocrText").value=text;
+
  if(mrp)document.getElementById("mrp").value=mrp;
  if(mfd)document.getElementById("mfd").value=mfd;
  if(exp)document.getElementById("exp").value=exp;
@@ -288,9 +472,11 @@ function parseOCR(raw){
  if(!mrp)missing.push("MRP");
  if(!mfd)missing.push("MFD");
  if(!exp)missing.push("EXP");
+
  document.getElementById("ocrResultStatus").textContent=
-   missing.length ? "OCR completed. Please verify the fields; not detected: "+missing.join(", ")+"."
-                  : "OCR completed. Please verify the extracted MRP, MFD and EXP before saving.";
+   missing.length
+   ? "OCR completed. Please verify the fields; not detected: "+missing.join(", ")+". Raw OCR text is shown below."
+   : "OCR completed using multiple passes. Please verify the extracted MRP, MFD and EXP before saving.";
 }
 
 function openProduct(){
@@ -328,7 +514,7 @@ async function save(){
  try{
   await fetch(API_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)});
   history.unshift({barcode:payload.barcode,name:payload.name,mrp:payload.mrp,mfd:payload.manufacturingDate,exp:payload.exp,time:new Date().toLocaleString()});
-  history=history.slice(0,10);localStorage.setItem("barcodeHistoryV4",JSON.stringify(history));renderHistory();
+  history=history.slice(0,10);localStorage.setItem("barcodeHistoryV5",JSON.stringify(history));renderHistory();
   st.textContent="Saved to Google Sheet.";st.className="status ok";st.classList.remove("hidden");
  }catch(e){
   st.textContent="Save failed: "+e.message;st.className="status bad";st.classList.remove("hidden");
