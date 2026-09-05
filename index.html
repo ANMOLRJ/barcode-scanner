@@ -30,19 +30,128 @@ textarea{min-height:100px;resize:vertical}
 .progress{height:8px;border-radius:99px;background:#e7eaf0;overflow:hidden;margin-top:10px}
 .progressbar{height:100%;width:0%;transition:width .2s}
 .small{font-size:12px}
+
+.shop-bar{
+ position:sticky;top:0;z-index:50;
+ display:flex;align-items:center;justify-content:space-between;gap:10px;
+ padding:10px 14px;background:#fff;border-bottom:1px solid #ddd;
+}
+.shop-id{font-size:12px;color:#777;flex:1}
+.small-btn{padding:7px 11px!important;font-size:12px!important}
+.login-card{max-width:520px;margin:30px auto}
+.hidden{display:none!important}
+
+.screen{display:none}.screen.active{display:block}
+#loginScreen{min-height:100vh;padding:30px 16px;background:#f4f6fa}
+.login-wrap{max-width:580px;margin:auto}
+.stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.stat{background:#fff;border-radius:16px;padding:15px;box-shadow:0 5px 18px rgba(20,30,50,.07)}
+.stat b{display:block;font-size:24px;margin-top:3px}
+.dashboard-actions{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.product-row{border-top:1px solid #edf0f4;padding:13px 0}
+.product-row:first-child{border-top:0}
+.row-actions{display:flex;gap:7px;margin-top:9px}
+.row-actions button{flex:1}
+.top-user{font-size:13px;color:#697386;margin-top:5px}
+@media(max-width:430px){.dashboard-actions{grid-template-columns:1fr}.stat-grid{grid-template-columns:1fr 1fr}}
 </style>
 
+<!-- Firebase Phone Authentication -->
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.18.0/firebase-auth-compat.js"></script>
+<script>
+// IMPORTANT: Replace these values with the Firebase Web App config from your Firebase Console.
+const firebaseConfig = {
+  apiKey: "YOUR_FIREBASE_API_KEY",
+  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_FIREBASE_APP_ID"
+};
+let firebaseReady = false;
+try {
+  if (!firebaseConfig.apiKey.startsWith("YOUR_")) {
+    firebase.initializeApp(firebaseConfig);
+    firebase.auth().languageCode = "en";
+    firebaseReady = true;
+  }
+} catch(e) { console.error("Firebase initialization failed", e); }
+</script>
 <!-- Free/open-source browser OCR: Tesseract.js -->
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 <body>
+<div id="shopBar" class="shop-bar hidden">
+  <span>🏪 <b id="currentShopName">Shop</b></span>
+  <span class="shop-id" id="currentShopId"></span>
+  <button id="logoutBtn" class="secondary small-btn">Logout</button>
+</div>
+
+<section id="loginScreen" class="screen active">
+  <div class="login-wrap">
+    <div class="card login-card">
+      <div class="step">Secure Shop Owner Login</div>
+      <h1 style="margin:6px 0 4px">🏪 Shop Owner Login</h1>
+      <p class="muted">Verify your mobile number with a real SMS OTP. New owners can create their shop after verification.</p>
+
+      <div id="phoneStep">
+        <div class="field"><label>Mobile Number</label><input id="loginPhone" type="tel" inputmode="tel" autocomplete="tel" placeholder="9876543210"></div>
+        <div id="recaptcha-container" style="margin:10px 0"></div>
+        <button class="btn primary" id="sendOtpBtn">📲 Send OTP</button>
+      </div>
+
+      <div id="otpStep" class="hidden">
+        <div class="field"><label>6-digit OTP</label><input id="otpCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456"></div>
+        <button class="btn primary" id="verifyOtpBtn">✅ Verify OTP</button>
+        <button class="btn" id="changePhoneBtn" style="margin-top:8px">← Change Number</button>
+      </div>
+
+      <div id="profileStep" class="hidden">
+        <div class="status ok" style="margin-bottom:10px">✓ Mobile number verified</div>
+        <div class="field"><label>Owner Name</label><input id="loginName" autocomplete="name" placeholder="Your name"></div>
+        <div class="field"><label>Email (optional)</label><input id="loginEmail" type="email" autocomplete="email" placeholder="owner@example.com"></div>
+        <div class="field"><label>Shop Name</label><input id="loginShopName" autocomplete="organization" placeholder="My Shop"></div>
+        <button class="btn primary" id="finishLoginBtn">🏪 Continue to Shop</button>
+      </div>
+
+      <div class="status" id="loginStatus" style="margin-top:10px">Enter your mobile number to receive an OTP.</div>
+      <p class="muted small" style="margin-top:10px">SMS OTP is handled by Firebase Authentication. Standard SMS charges/limits may apply.</p>
+    </div>
+  </div>
+</section>
+
 <div class="app">
 <header>
 <h1>📦 Smart Product Scanner</h1>
 <div class="sub">Barcode scan + improved free OCR for MRP, MFD and EXP.</div>
 </header>
 
-<section class="card" id="home">
+
+<section class="card hidden" id="dashboard">
+  <div class="step">Shop Dashboard</div>
+  <h2 id="dashTitle" style="margin:4px 0">My Shop</h2>
+  <div class="top-user" id="dashOwner"></div>
+  <div style="height:12px"></div>
+  <div class="stat-grid">
+    <div class="stat"><span class="muted small">Products</span><b id="statProducts">0</b></div>
+    <div class="stat"><span class="muted small">Sales</span><b id="statSales">0</b></div>
+    <div class="stat"><span class="muted small">Units Sold</span><b id="statUnits">0</b></div>
+    <div class="stat"><span class="muted small">Sales Amount</span><b id="statAmount">₹0</b></div>
+  </div>
+  <div style="height:12px"></div>
+  <div class="dashboard-actions">
+    <button class="btn primary" id="dashScan">📷 Add Product by Scan</button>
+    <button class="btn" id="dashRefresh">🔄 Refresh Products</button>
+  </div>
+</section>
+
+<section class="card hidden" id="productListCard">
+  <strong>My Shop Products</strong>
+  <div class="muted small" style="margin:4px 0 8px">Only products belonging to the logged-in shop are shown here.</div>
+  <div id="productList"></div>
+</section>
+<section class="card hidden" id="home">
 <button class="btn primary" id="start">📷 Start Scanning</button>
 <p class="muted small">Step 1 scans the barcode. Step 2 opens the camera again and uses enhanced Tesseract OCR with image preprocessing and multiple OCR passes to read package text.</p>
 <div style="height:9px"></div>
@@ -107,16 +216,182 @@ textarea{min-height:100px;resize:vertical}
 <button class="btn primary" id="save">💾 Save to Google Sheet</button>
 <div style="height:9px"></div>
 <button class="btn" id="scanAgain">📷 Scan Another Product</button>
+<button class="btn" id="backDashboard">🏪 Back to Dashboard</button>
 <div class="status hidden" id="saveStatus"></div>
 </section>
 
-<section class="card"><strong>Recent scans</strong><div id="history" style="margin-top:8px"></div></section>
+<section class="card hidden" id="recentCard"><strong>Recent scans</strong><div id="history" style="margin-top:8px"></div></section>
 </div>
 
 <canvas id="captureCanvas" class="hidden"></canvas>
 
 <script>
-const API_URL="https://script.google.com/macros/s/AKfycbxTkBzgsb1XDEdfWwZhDygc_9deosw1vtvWPFne5ZivVYW9f6Iz5wcmLCe6VX6ckybLoQ/exec";
+
+const AUTH_KEY="barcodeScannerShopAuthV8";
+let confirmationResult=null;
+let recaptchaVerifier=null;
+function getAuth(){try{return JSON.parse(localStorage.getItem(AUTH_KEY)||"null")}catch(e){return null}}
+function setAuth(u){localStorage.setItem(AUTH_KEY,JSON.stringify(u))}
+function clearAuth(){localStorage.removeItem(AUTH_KEY)}
+function showLogin(){
+ document.getElementById("loginScreen").classList.add("active");
+ ["home","dashboard","productListCard","recentCard","shopBar"].forEach(id=>document.getElementById(id)?.classList.add("hidden"));
+}
+function showApp(){
+ const a=getAuth(); if(!a){showLogin();return false}
+ document.getElementById("loginScreen").classList.remove("active");
+ document.getElementById("shopBar").classList.remove("hidden");
+ document.getElementById("currentShopName").textContent=a.shopName||"Shop";
+ document.getElementById("currentShopId").textContent=a.shopId||"";
+ document.getElementById("home").classList.add("hidden");
+ document.getElementById("dashboard").classList.remove("hidden");
+ document.getElementById("productListCard").classList.remove("hidden");
+ document.getElementById("recentCard").classList.remove("hidden");
+ loadDashboard(); return true;
+}
+function normalizePhoneInput(v){
+ let p=String(v||"").replace(/[^0-9+]/g,"");
+ if(p.startsWith("0"))p="+91"+p.slice(1); else if(!p.startsWith("+"))p="+91"+p;
+ return p;
+}
+function setLoginStatus(msg,kind=""){const st=document.getElementById("loginStatus");st.textContent=msg;st.className="status "+kind;}
+function initRecaptcha(){
+ if(!firebaseReady) throw new Error("Firebase is not configured. Open index.html and add your Firebase Web App config.");
+ if(recaptchaVerifier){try{recaptchaVerifier.clear()}catch(e){}}
+ recaptchaVerifier=new firebase.auth.RecaptchaVerifier("recaptcha-container",{size:"normal",callback:function(){}});
+ recaptchaVerifier.render();
+}
+async function sendOtp(){
+ const phone=normalizePhoneInput(document.getElementById("loginPhone").value);
+ if(!/^\+91[6-9]\d{9}$/.test(phone)){setLoginStatus("Enter a valid Indian mobile number, e.g. 9876543210.","bad");return}
+ if(!firebaseReady){setLoginStatus("Firebase is not configured yet. Add the Firebase Web App config in index.html.","bad");return}
+ const btn=document.getElementById("sendOtpBtn");btn.disabled=true;setLoginStatus("Sending OTP…");
+ try{
+  if(!recaptchaVerifier)initRecaptcha();
+  confirmationResult=await firebase.auth().signInWithPhoneNumber(phone,recaptchaVerifier);
+  document.getElementById("phoneStep").classList.add("hidden");
+  document.getElementById("otpStep").classList.remove("hidden");
+  setLoginStatus("OTP sent to "+phone+". Enter the 6-digit code.","ok");
+  document.getElementById("otpCode").focus();
+ }catch(e){
+  console.error(e);setLoginStatus("Could not send OTP: "+(e.message||e),"bad");
+  try{if(recaptchaVerifier)recaptchaVerifier.clear();}catch(x){} recaptchaVerifier=null;
+ }finally{btn.disabled=false}
+}
+async function verifyOtp(){
+ const code=document.getElementById("otpCode").value.trim();
+ if(!confirmationResult){setLoginStatus("Please request a new OTP.","bad");return}
+ if(!/^\d{6}$/.test(code)){setLoginStatus("Enter the 6-digit OTP.","bad");return}
+ const btn=document.getElementById("verifyOtpBtn");btn.disabled=true;setLoginStatus("Verifying OTP…");
+ try{
+  const result=await confirmationResult.confirm(code);
+  const user=result.user;
+  window.verifiedFirebaseUser=user;
+  document.getElementById("phoneStep").classList.add("hidden");
+  document.getElementById("otpStep").classList.add("hidden");
+  document.getElementById("profileStep").classList.remove("hidden");
+  setLoginStatus("Mobile verified. Complete your shop details.","ok");
+ }catch(e){setLoginStatus("Invalid OTP or verification failed: "+(e.message||e),"bad");}
+ finally{btn.disabled=false}
+}
+async function finishLogin(){
+ const user=window.verifiedFirebaseUser || firebase.auth().currentUser;
+ if(!user){setLoginStatus("Please verify your mobile number first.","bad");return}
+ const name=document.getElementById("loginName").value.trim();
+ const email=document.getElementById("loginEmail").value.trim().toLowerCase();
+ const shopName=document.getElementById("loginShopName").value.trim();
+ if(!name||!shopName){setLoginStatus("Enter owner name and shop name.","bad");return}
+ const btn=document.getElementById("finishLoginBtn");btn.disabled=true;setLoginStatus("Opening your shop…");
+ try{
+  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({
+   action:"loginFirebase",firebaseUid:user.uid,phone:user.phoneNumber,email,name,shopName
+  })});
+  const d=await r.json(); if(!d.ok)throw new Error(d.error||"Login failed");
+  setAuth(d.user);setLoginStatus("Login successful.","ok");showApp();
+ }catch(e){setLoginStatus("Login error: "+e.message,"bad")}
+ finally{btn.disabled=false}
+}
+function resetLogin(){
+ confirmationResult=null;window.verifiedFirebaseUser=null;
+ document.getElementById("phoneStep").classList.remove("hidden");
+ document.getElementById("otpStep").classList.add("hidden");
+ document.getElementById("profileStep").classList.add("hidden");
+ document.getElementById("otpCode").value="";setLoginStatus("Enter your mobile number to receive an OTP.");
+ try{if(recaptchaVerifier)recaptchaVerifier.clear()}catch(e){}recaptchaVerifier=null;
+}
+async function loadDashboard(){
+ const a=getAuth();if(!a)return;
+ try{
+  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+   body:JSON.stringify({action:"dashboard",shopId:a.shopId})});
+  const d=await r.json();if(!d.ok)throw new Error(d.error||"Dashboard failed");
+  document.getElementById("dashTitle").textContent=a.shopName||"My Shop";
+  document.getElementById("dashOwner").textContent=(a.name||"Owner")+" · "+(a.email||a.phone||"");
+  document.getElementById("statProducts").textContent=d.stats.products;
+  document.getElementById("statSales").textContent=d.stats.salesCount;
+  document.getElementById("statUnits").textContent=d.stats.salesUnits;
+  document.getElementById("statAmount").textContent="₹"+Number(d.stats.salesAmount||0).toFixed(2);
+  renderProducts(d.products||[]);
+ }catch(e){
+  document.getElementById("productList").innerHTML='<div class="status bad">Dashboard error: '+esc(e.message)+'</div>';
+ }
+}
+function renderProducts(items){
+ const el=document.getElementById("productList");
+ if(!items.length){el.innerHTML='<div class="muted" style="padding:12px 0">No products in this shop yet. Use Add Product by Scan.</div>';return}
+ el.innerHTML=items.map(p=>`
+ <div class="product-row">
+  <strong>${esc(p.name||"Unnamed product")}</strong>
+  <div class="muted small">${esc(p.barcode)} · Stock: <b>${p.quantity}</b></div>
+  <div>${p.mrp?"MRP ₹"+esc(p.mrp):""}${p.sellingPrice?" · Sell ₹"+esc(p.sellingPrice):""}</div>
+  <div class="muted small">${p.mfd?"MFD "+esc(p.mfd):""}${p.exp?" · EXP "+esc(p.exp):""}</div>
+  <div class="row-actions">
+   <button class="btn" onclick="sellProduct('${encodeURIComponent(p.barcode)}')">🧾 Sell 1</button>
+   <button class="btn" onclick="deleteProduct('${encodeURIComponent(p.barcode)}')">🗑️ Delete</button>
+  </div>
+ </div>`).join("");
+}
+async function deleteProduct(encoded){
+ const barcode=decodeURIComponent(encoded);const a=getAuth();
+ if(!confirm("Delete "+barcode+" from "+a.shopName+"?"))return;
+ try{
+  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+   body:JSON.stringify({action:"deleteProduct",shopId:a.shopId,barcode})});
+  const d=await r.json();if(!d.ok)throw new Error(d.error||"Delete failed");
+  loadDashboard();
+ }catch(e){alert(e.message)}
+}
+async function sellProduct(encoded){
+ const barcode=decodeURIComponent(encoded),a=getAuth();
+ const q=prompt("Quantity to sell","1");if(q===null)return;
+ const qty=Math.max(1,Number(q)||1);
+ try{
+  const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
+   body:JSON.stringify({action:"recordSale",shopId:a.shopId,shopName:a.shopName,userId:a.userId,barcode,quantity:qty})});
+  const d=await r.json();if(!d.ok)throw new Error(d.error||"Sale failed");
+  alert("Sale recorded. Total: ₹"+Number(d.total||0).toFixed(2));
+  loadDashboard();
+ }catch(e){alert(e.message)}
+}
+function requireAuth(){return !!getAuth()&&showApp()}
+document.addEventListener("DOMContentLoaded",()=>{
+ document.getElementById("sendOtpBtn")?.addEventListener("click",sendOtp);
+ document.getElementById("verifyOtpBtn")?.addEventListener("click",verifyOtp);
+ document.getElementById("finishLoginBtn")?.addEventListener("click",finishLogin);
+ document.getElementById("changePhoneBtn")?.addEventListener("click",resetLogin);
+ document.getElementById("logoutBtn")?.addEventListener("click",async()=>{clearAuth();try{await firebase.auth().signOut()}catch(e){}location.reload()});
+ document.getElementById("dashScan")?.addEventListener("click",()=>{
+   document.getElementById("dashboard").classList.add("hidden");
+   document.getElementById("productListCard").classList.add("hidden");
+   document.getElementById("home").classList.remove("hidden");
+   document.getElementById("start").click();
+ });
+ document.getElementById("dashRefresh")?.addEventListener("click",loadDashboard);
+ if(getAuth())showApp();else showLogin();
+});
+const API_URL="https://script.google.com/macros/s/AKfycbyWUeyupOAenIkEd8Ym773jmuTxGB2B4HuI5UeI_PlZR08VwOdB6vrpm_bKxc2v77AP/exec";
+
+if(firebaseReady){ firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.error); }
 
 const home=document.getElementById("home");
 const barcodeScanner=document.getElementById("barcodeScanner");
@@ -131,7 +406,7 @@ const captureCanvas=document.getElementById("captureCanvas");
 
 let barcodeStream=null,detailStream=null,detector=null,barcodeTimer=null;
 let currentBarcode="",barcodeSource="camera",detailsSource="ocr",ocrText="";
-let history=JSON.parse(localStorage.getItem("barcodeHistoryV5")||"[]");
+let history=JSON.parse(localStorage.getItem("barcodeHistoryV8")||"[]");
 
 function hideAll(){
  [barcodeScanner,detailScanner,manualCard,product,ocrProgress].forEach(x=>x.classList.add("hidden"));
@@ -503,7 +778,9 @@ async function lookupProduct(code){
 function val(id){return document.getElementById(id).value.trim()}
 async function save(){
  const st=document.getElementById("saveStatus"),btn=document.getElementById("save");
+ const a=getAuth(); if(!a){showLogin();return}
  const payload={
+  action:"saveProduct",shopId:a.shopId,shopName:a.shopName,userId:a.userId,
   barcode:currentBarcode,name:val("name"),brand:val("brand"),category:val("category"),
   mrp:val("mrp"),sellingPrice:val("sellingPrice"),manufacturingDate:val("mfd"),
   expiryDate:val("exp"),quantity:Math.max(1,Number(val("qty")||1)),
@@ -514,8 +791,9 @@ async function save(){
  try{
   await fetch(API_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)});
   history.unshift({barcode:payload.barcode,name:payload.name,mrp:payload.mrp,mfd:payload.manufacturingDate,exp:payload.exp,time:new Date().toLocaleString()});
-  history=history.slice(0,10);localStorage.setItem("barcodeHistoryV5",JSON.stringify(history));renderHistory();
-  st.textContent="Saved to Google Sheet.";st.className="status ok";st.classList.remove("hidden");
+  history=history.slice(0,10);localStorage.setItem("barcodeHistoryV8",JSON.stringify(history));renderHistory();
+  loadDashboard();
+  st.textContent="Saved to your shop.";st.className="status ok";st.classList.remove("hidden");
  }catch(e){
   st.textContent="Save failed: "+e.message;st.className="status bad";st.classList.remove("hidden");
  }finally{btn.disabled=false;btn.textContent="💾 Save to Google Sheet"}
@@ -543,7 +821,15 @@ document.getElementById("continueManual").onclick=async()=>{
 document.getElementById("barcodeInput").onkeydown=e=>{if(e.key==="Enter")document.getElementById("continueManual").click()};
 document.getElementById("skipDetails").onclick=()=>{stopDetailCamera();detailsSource="manual";ocrText="";openProduct()};
 document.getElementById("save").onclick=save;
-document.getElementById("scanAgain").onclick=async()=>{stopAll();hideAll();barcodeScanner.classList.remove("hidden");currentBarcode="";ocrText="";await startBarcodeCamera()};
+document.getElementById("backDashboard").onclick=()=>{
+ stopAll();hideAll();document.getElementById("dashboard").classList.remove("hidden");
+ document.getElementById("productListCard").classList.remove("hidden");loadDashboard();
+};
+document.getElementById("scanAgain").onclick=async()=>{
+ stopAll();hideAll();document.getElementById("dashboard").classList.add("hidden");
+ document.getElementById("productListCard").classList.add("hidden");
+ barcodeScanner.classList.remove("hidden");currentBarcode="";ocrText="";await startBarcodeCamera()
+};
 addEventListener("beforeunload",stopAll);
 renderHistory();
 </script>
